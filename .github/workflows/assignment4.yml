@@ -1,0 +1,218 @@
+name: assignment4
+
+on:
+  push:
+    branches: ['*']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      pet_store_status: ${{ steps.build-pet-store.outcome }}
+      pet_order_status: ${{ steps.build-pet-order.outcome }}
+      workflow_start: ${{ steps.timestamp.outputs.start_time }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Record workflow start time
+        id: timestamp
+        run: echo "start_time=$(date -Iminutes)" >> $GITHUB_OUTPUT
+
+      - name: Build pet-store image
+        id: build-pet-store
+        continue-on-error: true
+        run: docker build -t pet-store:latest ./pet-store
+
+      - name: Build pet-order image
+        id: build-pet-order
+        continue-on-error: true
+        run: docker build -t pet-order:latest ./pet-order
+
+      - name: Save Docker images
+        if: steps.build-pet-store.outcome == 'success' && steps.build-pet-order.outcome == 'success'
+        run: |
+          mkdir -p docker-images
+          docker save pet-store:latest -o docker-images/pet-store.tar
+          docker save pet-order:latest -o docker-images/pet-order.tar
+
+      - name: Upload Docker images artifact
+        if: steps.build-pet-store.outcome == 'success' && steps.build-pet-order.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-images
+          path: docker-images/
+          retention-days: 1
+
+  test:
+    runs-on: ubuntu-latest
+    needs: build
+    outputs:
+      pytest_status: ${{ steps.run-tests.outcome }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Docker images
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-images
+          path: docker-images/
+
+      - name: Load Docker images
+        run: |
+          docker load -i docker-images/pet-store.tar
+          docker load -i docker-images/pet-order.tar
+
+      - name: Start containers
+        id: start-containers
+        run: |
+          docker-compose up -d
+
+          echo "Waiting for services to be ready..."
+          sleep 30
+
+          # Verify containers are running
+          STORE1_STATUS="failed to run"
+          STORE2_STATUS="failed to run"
+          ORDER_STATUS="failed to run"
+
+          if docker inspect pet-store1 --format='{{.State.Running}}' 2>/dev/null | grep -q "true"; then
+            STORE1_STATUS="up and running"
+          fi
+          if docker inspect pet-store2 --format='{{.State.Running}}' 2>/dev/null | grep -q "true"; then
+            STORE2_STATUS="up and running"
+          fi
+          if docker inspect pet-order --format='{{.State.Running}}' 2>/dev/null | grep -q "true"; then
+            ORDER_STATUS="up and running"
+          fi
+
+          echo "container_store1=$STORE1_STATUS" >> $GITHUB_OUTPUT
+          echo "container_store2=$STORE2_STATUS" >> $GITHUB_OUTPUT
+          echo "container_order=$ORDER_STATUS" >> $GITHUB_OUTPUT
+
+          # Show container logs for debugging
+          echo "=== Container Logs ==="
+          docker-compose logs
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install test dependencies
+        run: pip install pytest requests
+
+      - name: Run pytest
+        id: run-tests
+        continue-on-error: true
+        run: |
+          cd $GITHUB_WORKSPACE
+          pytest tests/assn4_tests.py -v 2>&1 | tee assn4_test_results.txt
+          exit ${PIPESTATUS[0]}
+
+      - name: Generate log.txt
+        if: always()
+        run: |
+          # Line 1: Workflow start timestamp
+          echo "${{ needs.build.outputs.workflow_start }}" > log.txt
+
+          # Line 2: Submitter names
+          echo "Nadav Shalev Yosef, Nadav Passal" >> log.txt
+
+          # Line 3: Image build status
+          if [ "${{ needs.build.outputs.pet_store_status }}" = "success" ]; then
+            PET_STORE_BUILD="image pet-store successfully built;"
+          else
+            PET_STORE_BUILD="image pet-store not able to be built;"
+          fi
+          if [ "${{ needs.build.outputs.pet_order_status }}" = "success" ]; then
+            PET_ORDER_BUILD="image pet-order successfully built;"
+          else
+            PET_ORDER_BUILD="image pet-order not able to be built;"
+          fi
+          echo "${PET_STORE_BUILD}${PET_ORDER_BUILD}" >> log.txt
+
+          # Line 4: Container start status
+          echo "Container pet-store #1 ${{ steps.start-containers.outputs.container_store1 }};Container pet-store #2 ${{ steps.start-containers.outputs.container_store2 }};Container pet-order ${{ steps.start-containers.outputs.container_order }};" >> log.txt
+
+          # Line 5: Pytest result
+          if [ "${{ steps.run-tests.outcome }}" = "success" ]; then
+            echo "All pytests succeeded" >> log.txt
+          else
+            echo "pytests failed" >> log.txt
+          fi
+
+          echo "=== log.txt contents ==="
+          cat log.txt
+
+      - name: Upload log.txt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log
+          path: log.txt
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: assn4_test_results.txt
+
+      - name: Stop containers
+        if: always()
+        run: docker-compose down -v
+
+      - name: Fail job if tests failed
+        if: steps.run-tests.outcome != 'success'
+        run: exit 1
+
+  query:
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Docker images
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-images
+          path: docker-images/
+
+      - name: Load Docker images
+        run: |
+          docker load -i docker-images/pet-store.tar
+          docker load -i docker-images/pet-order.tar
+
+      - name: Start containers
+        run: |
+          docker-compose up -d
+          echo "Waiting for services to be ready..."
+          sleep 30
+          docker-compose logs
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run query processor
+        run: python scripts/query_processor.py
+
+      - name: Upload response.txt
+        uses: actions/upload-artifact@v4
+        with:
+          name: query-response
+          path: response.txt
+
+      - name: Stop containers
+        if: always()
+        run: docker-compose down -v

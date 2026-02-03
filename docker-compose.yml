@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  # MongoDB for pet-store services (shared by both stores)
+  mongodb-stores:
+    image: mongo:7.0
+    container_name: mongodb-stores
+    ports:
+      - "27017:27017"
+    networks:
+      - petstore-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # MongoDB for pet-order service (separate instance)
+  mongodb-orders:
+    image: mongo:7.0
+    container_name: mongodb-orders
+    ports:
+      - "27018:27017"
+    networks:
+      - petstore-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Pet Store 1 (port 5001)
+  pet-store1:
+    image: pet-store:latest
+    container_name: pet-store1
+    environment:
+      - PORT=5001
+      - STORE_ID=1
+      - MONGO_URI=mongodb://mongodb-stores:27017/petstore
+      - MONGO_COLLECTION=pet-store1
+      - NINJA_API_KEY=LTdiBLKLgYtxViDRO8yNjA==5WsW9gTJ1AMC9FnD
+    ports:
+      - "5001:5001"
+    depends_on:
+      mongodb-stores:
+        condition: service_healthy
+    networks:
+      - petstore-network
+
+  # Pet Store 2 (port 5002)
+  pet-store2:
+    image: pet-store:latest
+    container_name: pet-store2
+    environment:
+      - PORT=5002
+      - STORE_ID=2
+      - MONGO_URI=mongodb://mongodb-stores:27017/petstore
+      - MONGO_COLLECTION=pet-store2
+      - NINJA_API_KEY=LTdiBLKLgYtxViDRO8yNjA==5WsW9gTJ1AMC9FnD
+    ports:
+      - "5002:5002"
+    depends_on:
+      mongodb-stores:
+        condition: service_healthy
+    networks:
+      - petstore-network
+
+  # Pet Order (port 5003)
+  pet-order:
+    image: pet-order:latest
+    container_name: pet-order
+    environment:
+      - PORT=5003
+      - MONGO_URI=mongodb://mongodb-orders:27017/petstore
+      - PET_STORE_1_URL=http://pet-store1:5001
+      - PET_STORE_2_URL=http://pet-store2:5002
+    ports:
+      - "5003:5003"
+    depends_on:
+      mongodb-orders:
+        condition: service_healthy
+      pet-store1:
+        condition: service_started
+      pet-store2:
+        condition: service_started
+    networks:
+      - petstore-network
+
+networks:
+  petstore-network:
+    driver: bridge
