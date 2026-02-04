@@ -23,24 +23,32 @@ PET_TYPE1_VAL = {
     "type": "Golden Retriever",
     "family": "Canidae",
     "genus": "Canis",
+    "attributes": [],
+    "lifespan": 12
 }
 
 PET_TYPE2_VAL = {
     "type": "Australian Shepherd",
     "family": "Canidae",
     "genus": "Canis",
+    "attributes": ["Loyal", "outgoing", "and", "friendly"],
+    "lifespan": 15
 }
 
 PET_TYPE3_VAL = {
     "type": "Abyssinian",
     "family": "Felidae",
     "genus": "Felis",
+    "attributes": ["Intelligent", "and", "curious"],
+    "lifespan": 13
 }
 
 PET_TYPE4_VAL = {
     "type": "bulldog",
     "family": "Canidae",
     "genus": "Canis",
+    "attributes": ["Gentle", "calm", "and", "affectionate"],
+    "lifespan": None
 }
 
 # Pet payloads (as specified in assignment)
@@ -312,8 +320,11 @@ class TestGetRequests:
         )
         assert response.status_code == 200, f"Expected 200, got {response.status_code}"
         data = response.json()
+        assert data["type"] == PET_TYPE2_VAL["type"]
         assert data["family"] == PET_TYPE2_VAL["family"]
         assert data["genus"] == PET_TYPE2_VAL["genus"]
+        assert data["attributes"] == PET_TYPE2_VAL["attributes"]
+        assert data["lifespan"] == PET_TYPE2_VAL["lifespan"]
 
     def test_get_pets_of_type4_from_store2(self):
         """
